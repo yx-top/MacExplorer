@@ -1,0 +1,14 @@
+* text=auto
+
+*.swift text eol=lf
+*.sh text eol=lf
+*.md text eol=lf
+*.plist text eol=lf
+
+*.icns binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.zip binary
+*.dmg binary
+*.app binary

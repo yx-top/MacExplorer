@@ -1,0 +1,40 @@
+name: Feature Request
+description: Suggest an improvement for MacExplorer.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What workflow is hard or missing today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What would you like MacExplorer to do?
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Navigation
+        - File operations
+        - Search
+        - Preview
+        - Sidebar
+        - Tabs
+        - Appearance
+        - Packaging
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional Context
+      description: Screenshots or references are welcome. Please avoid private data.
