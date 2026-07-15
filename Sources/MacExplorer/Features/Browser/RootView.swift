@@ -176,7 +176,7 @@ private struct BrowserContentView: View {
             guard browser.canStartFileOperation else { return false }
             let shouldCopy = NSEvent.modifierFlags.contains(.option)
             Task {
-                let urls = await loadDroppedFileURLs(from: providers)
+                let urls = browser.resolveDroppedFileURLs(await loadDroppedFileURLs(from: providers))
                 await browser.dropItems(urls, copy: shouldCopy)
             }
             return true

@@ -4,20 +4,81 @@ import UniformTypeIdentifiers
 
 struct FileListView: View {
     @EnvironmentObject private var browser: BrowserStore
+    @State private var itemFrames: [FileItem.ID: CGRect] = [:]
+    @State private var selectionDrag: FileSelectionDragState?
+    @State private var ignoresSelectionDrag = false
 
     var body: some View {
         VStack(spacing: 0) {
             FileListHeader()
             Divider()
 
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    ForEach(browser.displayedItems) { item in
-                        FileListRow(item: item, isSelected: browser.selectedItemIDs.contains(item.id))
-                    }
+            fileScrollView
+        }
+    }
+
+    private var fileScrollView: some View {
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                ForEach(browser.displayedItems) { item in
+                    FileListRow(item: item, isSelected: browser.selectedItemIDs.contains(item.id))
                 }
             }
         }
+        .coordinateSpace(name: fileSelectionCoordinateSpaceName)
+        .onPreferenceChange(FileItemFramePreferenceKey.self) { frames in
+            itemFrames = frames
+        }
+        .overlay {
+            if let selectionDrag, selectionDrag.isSelectingRange {
+                FileSelectionMarquee(rect: selectionDrag.selectionRect)
+            }
+        }
+        .simultaneousGesture(fileSelectionGesture)
+    }
+
+    private var fileSelectionGesture: some Gesture {
+        DragGesture(minimumDistance: 0, coordinateSpace: .named(fileSelectionCoordinateSpaceName))
+            .onChanged { value in
+                if selectionDrag == nil && !ignoresSelectionDrag {
+                    if itemFrames.values.contains(where: { $0.contains(value.startLocation) }) {
+                        ignoresSelectionDrag = true
+                        return
+                    }
+
+                    browser.requestFocus(.fileArea)
+                    selectionDrag = FileSelectionDragState(startLocation: value.startLocation, location: value.location)
+                }
+
+                guard var drag = selectionDrag else { return }
+                drag.location = value.location
+                selectionDrag = drag
+
+                if drag.isSelectingRange {
+                    browser.selectItems(withIDs: itemIDs(in: drag.selectionRect))
+                }
+            }
+            .onEnded { value in
+                defer {
+                    selectionDrag = nil
+                    ignoresSelectionDrag = false
+                }
+
+                guard var drag = selectionDrag else { return }
+                drag.location = value.location
+
+                if drag.isSelectingRange {
+                    browser.selectItems(withIDs: itemIDs(in: drag.selectionRect))
+                } else {
+                    browser.clearSelectedItems()
+                }
+            }
+    }
+
+    private func itemIDs(in rect: CGRect) -> Set<FileItem.ID> {
+        Set(itemFrames.compactMap { id, frame in
+            frame.intersects(rect) ? id : nil
+        })
     }
 }
 
@@ -118,6 +179,7 @@ private struct FileListRow: View {
                     .padding(.vertical, 2)
             }
         }
+        .reportsFileItemFrame(id: item.id)
         .contentShape(Rectangle())
         .gesture(itemActivationGesture)
         .onDrag {
@@ -196,7 +258,7 @@ private struct FileListRow: View {
     }
 
     private func selectWithCurrentModifiers() {
-        let flags = NSEvent.modifierFlags
+        let flags = InputEventTracker.selectionModifierFlags
         browser.requestFocus(.fileArea)
         browser.select(
             item,
@@ -219,7 +281,7 @@ private struct FileListRow: View {
 
         let shouldCopy = NSEvent.modifierFlags.contains(.option)
         Task {
-            let urls = await loadDroppedFileURLs(from: providers)
+            let urls = browser.resolveDroppedFileURLs(await loadDroppedFileURLs(from: providers))
             await browser.dropItems(urls, to: item.url, copy: shouldCopy)
         }
         return true

@@ -86,6 +86,8 @@ final class BrowserStore: ObservableObject {
     private var activeTransferTask: Task<[URL], Error>?
     private var selectionAnchorItemID: FileItem.ID?
     private var selectionFocusItemID: FileItem.ID?
+    private var activeInternalDragURLs: [URL] = []
+    private var activeInternalDragStartedAt: Date?
     private var isApplyingDirectoryPreferences = false
     private let recentDirectoryLimit = 5
     private let favoriteDirectoryLimit = 30
@@ -446,6 +448,16 @@ final class BrowserStore: ObservableObject {
         }
     }
 
+    func selectItems(withIDs itemIDs: Set<FileItem.ID>) {
+        let orderedIDs = displayedItems.map(\.id).filter { itemIDs.contains($0) }
+        setSelection(Set(orderedIDs), anchor: orderedIDs.first, focus: orderedIDs.last)
+    }
+
+    func clearSelectedItems() {
+        requestFocus(.fileArea)
+        clearSelection()
+    }
+
     func prepareDragSelection(for item: FileItem) -> [URL] {
         requestFocus(.fileArea)
         if !selectedItemIDs.contains(item.id) {
@@ -453,7 +465,31 @@ final class BrowserStore: ObservableObject {
         }
 
         let urls = selectedItems.map(\.url)
-        return urls.isEmpty ? [item.url] : urls
+        let dragURLs = normalizedFileURLs(urls.isEmpty ? [item.url] : urls)
+        activeInternalDragURLs = dragURLs
+        activeInternalDragStartedAt = Date()
+        return dragURLs
+    }
+
+    func resolveDroppedFileURLs(_ loadedURLs: [URL]) -> [URL] {
+        defer { clearActiveInternalDrag() }
+
+        let loadedURLs = normalizedFileURLs(loadedURLs)
+        guard let startedAt = activeInternalDragStartedAt,
+              Date().timeIntervalSince(startedAt) <= 60 else {
+            return loadedURLs
+        }
+
+        let internalURLs = normalizedFileURLs(activeInternalDragURLs)
+        guard internalURLs.count > 1 else {
+            return loadedURLs.isEmpty ? internalURLs : loadedURLs
+        }
+
+        guard loadedURLs.isEmpty || loadedURLs.contains(where: { internalURLs.contains($0) }) else {
+            return loadedURLs
+        }
+
+        return internalURLs
     }
 
     func openSelectedItems() async {
@@ -1014,6 +1050,24 @@ final class BrowserStore: ObservableObject {
     private func firstDisplayedSelectedItemID(in itemIDs: Set<FileItem.ID>? = nil) -> FileItem.ID? {
         let itemIDs = itemIDs ?? selectedItemIDs
         return displayedItems.first { itemIDs.contains($0.id) }?.id
+    }
+
+    private func normalizedFileURLs(_ urls: [URL]) -> [URL] {
+        var seen: Set<URL> = []
+        var normalizedURLs: [URL] = []
+
+        for url in urls {
+            let standardizedURL = url.standardizedFileURL
+            guard seen.insert(standardizedURL).inserted else { continue }
+            normalizedURLs.append(standardizedURL)
+        }
+
+        return normalizedURLs
+    }
+
+    private func clearActiveInternalDrag() {
+        activeInternalDragURLs = []
+        activeInternalDragStartedAt = nil
     }
 
     private func clearSelection() {

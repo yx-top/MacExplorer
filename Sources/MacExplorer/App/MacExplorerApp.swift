@@ -2,6 +2,10 @@ import SwiftUI
 
 @main
 struct MacExplorerApp: App {
+    init() {
+        InputEventTracker.install()
+    }
+
     var body: some Scene {
         WindowGroup("MacExplorer", id: "browser") {
             BrowserWindow()
