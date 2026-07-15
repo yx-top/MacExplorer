@@ -172,7 +172,7 @@ private struct BrowserContentView: View {
                 isFocused = false
             }
         }
-        .onDrop(of: [UTType.fileURL], isTargeted: $isDropTargeted) { providers in
+        .onDrop(of: [macExplorerDraggedFileURLsType, UTType.fileURL], isTargeted: $isDropTargeted) { providers in
             guard browser.canStartFileOperation else { return false }
             let shouldCopy = NSEvent.modifierFlags.contains(.option)
             Task {

@@ -42,7 +42,7 @@ struct AppCommands: Commands {
             Button(L10n.text(.closeTab, for: language)) {
                 browserStore?.closeSelectedTab()
             }
-            .keyboardShortcut("w", modifiers: .command)
+            .keyboardShortcut("w", modifiers: [.command, .control])
             .disabled(browserStore?.canCloseSelectedTab != true)
         }
 

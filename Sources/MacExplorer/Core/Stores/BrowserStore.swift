@@ -84,7 +84,8 @@ final class BrowserStore: ObservableObject {
     private var searchRequestID = UUID()
     private var monitorReloadTask: Task<Void, Never>?
     private var activeTransferTask: Task<[URL], Error>?
-    private var lastSelectedItemID: FileItem.ID?
+    private var selectionAnchorItemID: FileItem.ID?
+    private var selectionFocusItemID: FileItem.ID?
     private var isApplyingDirectoryPreferences = false
     private let recentDirectoryLimit = 5
     private let favoriteDirectoryLimit = 30
@@ -391,26 +392,28 @@ final class BrowserStore: ObservableObject {
     }
 
     func select(_ item: FileItem) {
-        selectedItemIDs = [item.id]
-        lastSelectedItemID = item.id
+        setSelection([item.id], anchor: item.id, focus: item.id)
     }
 
     func select(_ item: FileItem, extending: Bool, toggling: Bool) {
-        if extending, let lastSelectedItemID,
-           let lastIndex = displayedItems.firstIndex(where: { $0.id == lastSelectedItemID }),
+        if extending,
+           let anchorItemID = selectionAnchorItemID ?? selectionFocusItemID ?? firstDisplayedSelectedItemID(),
+           let anchorIndex = displayedItems.firstIndex(where: { $0.id == anchorItemID }),
            let currentIndex = displayedItems.firstIndex(where: { $0.id == item.id }) {
-            let bounds = min(lastIndex, currentIndex)...max(lastIndex, currentIndex)
-            selectedItemIDs = Set(displayedItems[bounds].map(\.id))
+            let bounds = min(anchorIndex, currentIndex)...max(anchorIndex, currentIndex)
+            setSelection(Set(displayedItems[bounds].map(\.id)), anchor: anchorItemID, focus: item.id)
             return
         }
 
         if toggling {
-            if selectedItemIDs.contains(item.id) {
-                selectedItemIDs.remove(item.id)
+            var updatedSelection = selectedItemIDs
+            if updatedSelection.contains(item.id) {
+                updatedSelection.remove(item.id)
+                setSelection(updatedSelection)
             } else {
-                selectedItemIDs.insert(item.id)
+                updatedSelection.insert(item.id)
+                setSelection(updatedSelection, anchor: item.id, focus: item.id)
             }
-            lastSelectedItemID = item.id
             return
         }
 
@@ -418,25 +421,39 @@ final class BrowserStore: ObservableObject {
     }
 
     func selectAll() {
-        selectedItemIDs = Set(displayedItems.map(\.id))
-        lastSelectedItemID = displayedItems.last?.id
+        setSelection(
+            Set(displayedItems.map(\.id)),
+            anchor: displayedItems.first?.id,
+            focus: displayedItems.last?.id
+        )
     }
 
     func moveSelection(by offset: Int, extending: Bool = false) {
         guard !displayedItems.isEmpty else { return }
 
-        let currentIndex = selectionAnchorIndex ?? (offset >= 0 ? -1 : displayedItems.count)
+        let currentIndex = selectionFocusIndex ?? selectionAnchorIndex ?? (offset >= 0 ? -1 : displayedItems.count)
         let nextIndex = min(max(currentIndex + offset, 0), displayedItems.count - 1)
         let nextItem = displayedItems[nextIndex]
 
-        if extending,
-           let anchor = lastSelectedItemID,
-           let anchorIndex = displayedItems.firstIndex(where: { $0.id == anchor }) {
+        if extending {
+            let anchor = selectionAnchorItemID ?? selectionFocusItemID ?? nextItem.id
+            let anchorIndex = displayedItems.firstIndex(where: { $0.id == anchor }) ?? nextIndex
+            let resolvedAnchor = displayedItems[anchorIndex].id
             let bounds = min(anchorIndex, nextIndex)...max(anchorIndex, nextIndex)
-            selectedItemIDs = Set(displayedItems[bounds].map(\.id))
+            setSelection(Set(displayedItems[bounds].map(\.id)), anchor: resolvedAnchor, focus: nextItem.id)
         } else {
             select(nextItem)
         }
+    }
+
+    func prepareDragSelection(for item: FileItem) -> [URL] {
+        requestFocus(.fileArea)
+        if !selectedItemIDs.contains(item.id) {
+            select(item)
+        }
+
+        let urls = selectedItems.map(\.url)
+        return urls.isEmpty ? [item.url] : urls
     }
 
     func openSelectedItems() async {
@@ -659,7 +676,7 @@ final class BrowserStore: ObservableObject {
             let folder = try fileOperations.createFolder(named: name, in: currentURL)
             finishOperation(message: L10n.created(folder.lastPathComponent, for: language))
             await reload()
-            selectedItemIDs = [folder]
+            setSelection([folder], anchor: folder, focus: folder)
         } catch {
             failOperation(error)
         }
@@ -691,7 +708,7 @@ final class BrowserStore: ObservableObject {
             let file = try fileOperations.createEmptyFile(named: name, in: currentURL)
             finishOperation(message: L10n.created(file.lastPathComponent, for: language))
             await reload()
-            selectedItemIDs = [file]
+            setSelection([file], anchor: file, focus: file)
         } catch {
             failOperation(error)
         }
@@ -723,7 +740,7 @@ final class BrowserStore: ObservableObject {
             let renamed = try fileOperations.rename(item.url, to: name)
             finishOperation(message: L10n.renamed(to: renamed.lastPathComponent, for: language))
             await reload()
-            selectedItemIDs = [renamed]
+            setSelection([renamed], anchor: renamed, focus: renamed)
         } catch {
             failOperation(error)
         }
@@ -818,9 +835,10 @@ final class BrowserStore: ObservableObject {
                 finishOperation(message: L10n.pasted(urls: destinations, for: language))
             }
             await reload()
-            selectedItemIDs = destinationDirectory.standardizedFileURL == currentURL.standardizedFileURL
+            let updatedSelection = destinationDirectory.standardizedFileURL == currentURL.standardizedFileURL
                 ? Set(destinations)
                 : []
+            setSelection(updatedSelection, anchor: destinations.first, focus: destinations.last)
         } catch is CancellationError {
             activeTransferTask = nil
             markActiveOperationCanceled()
@@ -960,19 +978,46 @@ final class BrowserStore: ObservableObject {
         loadRequestID == requestID && selectedTabID == tabID && tabIndex(for: tabID) != nil
     }
 
+    private func setSelection(_ itemIDs: Set<FileItem.ID>, anchor: FileItem.ID? = nil, focus: FileItem.ID? = nil) {
+        selectedItemIDs = itemIDs
+        guard !itemIDs.isEmpty else {
+            selectionAnchorItemID = nil
+            selectionFocusItemID = nil
+            return
+        }
+
+        let fallbackAnchor = firstDisplayedSelectedItemID(in: itemIDs)
+        selectionAnchorItemID = anchor.flatMap { itemIDs.contains($0) ? $0 : nil } ?? fallbackAnchor
+        selectionFocusItemID = focus.flatMap { itemIDs.contains($0) ? $0 : nil } ?? selectionAnchorItemID
+    }
+
     private var selectionAnchorIndex: Int? {
-        if let lastSelectedItemID,
-           let index = displayedItems.firstIndex(where: { $0.id == lastSelectedItemID }) {
+        if let selectionAnchorItemID,
+           let index = displayedItems.firstIndex(where: { $0.id == selectionAnchorItemID }) {
             return index
         }
 
-        guard let firstSelection = selectedItemIDs.first else { return nil }
+        guard let firstSelection = firstDisplayedSelectedItemID() else { return nil }
         return displayedItems.firstIndex { $0.id == firstSelection }
     }
 
+    private var selectionFocusIndex: Int? {
+        if let selectionFocusItemID,
+           let index = displayedItems.firstIndex(where: { $0.id == selectionFocusItemID }) {
+            return index
+        }
+
+        guard let firstSelection = firstDisplayedSelectedItemID() else { return nil }
+        return displayedItems.firstIndex { $0.id == firstSelection }
+    }
+
+    private func firstDisplayedSelectedItemID(in itemIDs: Set<FileItem.ID>? = nil) -> FileItem.ID? {
+        let itemIDs = itemIDs ?? selectedItemIDs
+        return displayedItems.first { itemIDs.contains($0.id) }?.id
+    }
+
     private func clearSelection() {
-        selectedItemIDs.removeAll()
-        lastSelectedItemID = nil
+        setSelection([])
     }
 
     private func clearSearchForLocationChange() {

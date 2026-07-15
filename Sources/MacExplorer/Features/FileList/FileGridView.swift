@@ -62,10 +62,9 @@ private struct FileGridCell: View {
         .contentShape(Rectangle())
         .gesture(itemActivationGesture)
         .onDrag {
-            prepareDragSelection()
-            return NSItemProvider(object: item.url as NSURL)
+            makeDragItemProvider()
         }
-        .onDrop(of: [UTType.fileURL], isTargeted: $isDropTargeted) { providers in
+        .onDrop(of: [macExplorerDraggedFileURLsType, UTType.fileURL], isTargeted: $isDropTargeted) { providers in
             handleDrop(providers)
         }
         .contextMenu {
@@ -143,11 +142,9 @@ private struct FileGridCell: View {
         )
     }
 
-    private func prepareDragSelection() {
-        browser.requestFocus(.fileArea)
-        if !browser.selectedItemIDs.contains(item.id) {
-            browser.select(item)
-        }
+    private func makeDragItemProvider() -> NSItemProvider {
+        let urls = browser.prepareDragSelection(for: item)
+        return makeFileDragItemProvider(for: urls, fallbackURL: item.url)
     }
 
     private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
