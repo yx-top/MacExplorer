@@ -176,7 +176,7 @@ private struct BrowserContentView: View {
             guard browser.canStartFileOperation else { return false }
             let shouldCopy = NSEvent.modifierFlags.contains(.option)
             Task {
-                let urls = await droppedURLs(from: providers)
+                let urls = await loadDroppedFileURLs(from: providers)
                 await browser.dropItems(urls, copy: shouldCopy)
             }
             return true
@@ -200,34 +200,6 @@ private struct BrowserContentView: View {
             }
             Button(L10n.text(.refresh, for: browser.language)) {
                 Task { await browser.reload() }
-            }
-        }
-    }
-
-    private func droppedURLs(from providers: [NSItemProvider]) async -> [URL] {
-        var urls: [URL] = []
-
-        for provider in providers where provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
-            if let url = await loadFileURL(from: provider) {
-                urls.append(url)
-            }
-        }
-
-        return urls
-    }
-
-    private func loadFileURL(from provider: NSItemProvider) async -> URL? {
-        await withCheckedContinuation { continuation in
-            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
-                if let url = item as? URL {
-                    continuation.resume(returning: url)
-                } else if let nsURL = item as? NSURL {
-                    continuation.resume(returning: nsURL as URL)
-                } else if let data = item as? Data {
-                    continuation.resume(returning: URL(dataRepresentation: data, relativeTo: nil))
-                } else {
-                    continuation.resume(returning: nil)
-                }
             }
         }
     }

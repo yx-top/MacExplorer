@@ -758,16 +758,23 @@ final class BrowserStore: ObservableObject {
     }
 
     func dropItems(_ urls: [URL], copy: Bool) async {
-        await transferItems(urls, operation: copy ? .copy : .cut)
+        await dropItems(urls, to: currentURL, copy: copy)
     }
 
-    private func transferItems(_ urls: [URL], operation: FileClipboardOperation) async {
+    func dropItems(_ urls: [URL], to directory: URL, copy: Bool) async {
+        await transferItems(urls, to: directory, operation: copy ? .copy : .cut)
+    }
+
+    private func transferItems(_ urls: [URL], to directory: URL? = nil, operation: FileClipboardOperation) async {
+        guard !urls.isEmpty else { return }
+
         guard canStartFileOperation else {
             showFileOperationBusyMessage()
             return
         }
 
-        let conflicts = conflictingURLs(for: urls, in: currentURL)
+        let destinationDirectory = directory ?? currentURL
+        let conflicts = conflictingURLs(for: urls, in: destinationDirectory)
         let conflictResolution: FileConflictResolution
         if conflicts.isEmpty {
             conflictResolution = .keepBoth
@@ -781,10 +788,10 @@ final class BrowserStore: ObservableObject {
             let task: Task<[URL], Error>
             if operation == .cut {
                 startOperation(kind: .move, totalItems: urls.count, currentItemName: urls.first?.lastPathComponent)
-                task = Task { [fileOperations, currentURL] in
+                task = Task { [fileOperations, destinationDirectory] in
                     try await fileOperations.moveItems(
                         urls,
-                        to: currentURL,
+                        to: destinationDirectory,
                         conflictResolution: conflictResolution
                     ) { [weak self] progress in
                         await self?.updateOperation(progress)
@@ -792,10 +799,10 @@ final class BrowserStore: ObservableObject {
                 }
             } else {
                 startOperation(kind: .copy, totalItems: urls.count, currentItemName: urls.first?.lastPathComponent)
-                task = Task { [fileOperations, currentURL] in
+                task = Task { [fileOperations, destinationDirectory] in
                     try await fileOperations.copyItems(
                         urls,
-                        to: currentURL,
+                        to: destinationDirectory,
                         conflictResolution: conflictResolution
                     ) { [weak self] progress in
                         await self?.updateOperation(progress)
@@ -811,7 +818,9 @@ final class BrowserStore: ObservableObject {
                 finishOperation(message: L10n.pasted(urls: destinations, for: language))
             }
             await reload()
-            selectedItemIDs = Set(destinations)
+            selectedItemIDs = destinationDirectory.standardizedFileURL == currentURL.standardizedFileURL
+                ? Set(destinations)
+                : []
         } catch is CancellationError {
             activeTransferTask = nil
             markActiveOperationCanceled()

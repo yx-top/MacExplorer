@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct FileGridView: View {
     @EnvironmentObject private var browser: BrowserStore
@@ -24,6 +25,7 @@ private struct FileGridCell: View {
     @EnvironmentObject private var browser: BrowserStore
     let item: FileItem
     let isSelected: Bool
+    @State private var isDropTargeted = false
 
     var body: some View {
         VStack(spacing: 8) {
@@ -51,11 +53,20 @@ private struct FileGridCell: View {
         .padding(8)
         .frame(width: 112, height: browser.isRecursiveSearchActive ? 122 : 104)
         .background(isSelected ? AppTheme.selectedFill : Color.clear, in: RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            if isDropTargeted && item.isDirectory {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 2, dash: [5, 4]))
+            }
+        }
         .contentShape(Rectangle())
         .gesture(itemActivationGesture)
         .onDrag {
-            browser.select(item)
+            prepareDragSelection()
             return NSItemProvider(object: item.url as NSURL)
+        }
+        .onDrop(of: [UTType.fileURL], isTargeted: $isDropTargeted) { providers in
+            handleDrop(providers)
         }
         .contextMenu {
             Button(L10n.text(.open, for: browser.language)) {
@@ -130,5 +141,27 @@ private struct FileGridCell: View {
             extending: flags.contains(.shift),
             toggling: flags.contains(.command)
         )
+    }
+
+    private func prepareDragSelection() {
+        browser.requestFocus(.fileArea)
+        if !browser.selectedItemIDs.contains(item.id) {
+            browser.select(item)
+        }
+    }
+
+    private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
+        guard item.isDirectory,
+              browser.canStartFileOperation,
+              providers.contains(where: { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }) else {
+            return false
+        }
+
+        let shouldCopy = NSEvent.modifierFlags.contains(.option)
+        Task {
+            let urls = await loadDroppedFileURLs(from: providers)
+            await browser.dropItems(urls, to: item.url, copy: shouldCopy)
+        }
+        return true
     }
 }
